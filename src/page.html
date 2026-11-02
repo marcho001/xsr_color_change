@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XSR700 烤漆模擬</title>
+<style>
+  :root{
+    --bg:#f4f1ea; --panel:#fffdf8; --ink:#1d1c1a; --muted:#77736b; --line:#e3ddd1; --accent:#b4471f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#151513; --panel:#1f1e1b; --ink:#f1ede4; --muted:#a29c90; --line:#34322d; --accent:#e0794f; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang TC","Noto Sans TC",system-ui,sans-serif}
+  header{padding:20px 16px 4px;max-width:1240px;margin:0 auto}
+  h1{margin:0;font-size:22px;letter-spacing:.02em}
+  header p{margin:4px 0 0;color:var(--muted);font-size:14px}
+  main{max-width:1240px;margin:0 auto;padding:12px 16px 32px;display:grid;grid-template-columns:1fr 360px;gap:20px}
+  @media (max-width:900px){ main{grid-template-columns:1fr} }
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;position:sticky;top:12px;align-self:start}
+  @media (max-width:900px){ .stage{position:static} }
+  .photo{background:#ECEAE5;border-radius:10px;overflow:hidden;position:relative}
+  .photo canvas{width:100%;height:auto;display:block}
+  .photo .tag{position:absolute;left:10px;top:10px;font-size:12px;background:rgba(0,0,0,.6);color:#fff;padding:3px 8px;border-radius:6px;display:none}
+  .photo.orig .tag{display:block}
+  .summary{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .chip{display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;font-variant-numeric:tabular-nums}
+  .chip i{width:14px;height:14px;border-radius:50%;border:1px solid rgba(128,128,128,.5);display:inline-block}
+  .actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px 14px;border-radius:8px;cursor:pointer}
+  button:hover{border-color:var(--muted)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .panel{display:flex;flex-direction:column;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .card h2{margin:0 0 10px;font-size:16px;display:flex;justify-content:space-between;align-items:center}
+  .row{display:flex;gap:8px;align-items:center}
+  input[type=color]{width:44px;height:38px;border:1px solid var(--line);border-radius:8px;padding:2px;background:var(--panel);cursor:pointer;flex:none}
+  input[type=text]{flex:1;min-width:0;font:inherit;font-size:15px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-family:ui-monospace,Menlo,monospace;text-transform:uppercase}
+  input[type=text].bad{border-color:#d33}
+  .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:10px}
+  .seg button{flex:1;border:0;border-radius:0;padding:6px 0;font-size:13px}
+  .seg button+button{border-left:1px solid var(--line)}
+  .seg button.on{background:var(--ink);color:var(--panel)}
+  .swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:10px}
+  .sw{aspect-ratio:1;border-radius:8px;border:1px solid rgba(128,128,128,.35);cursor:pointer;padding:0}
+  .sw.on{outline:2px solid var(--accent);outline-offset:2px}
+  label.link{font-size:13px;font-weight:400;color:var(--muted);display:flex;gap:6px;align-items:center;cursor:pointer}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px;min-height:1em}
+  .card.disabled .body{opacity:.4;pointer-events:none}
+  .sub{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line)}
+  .sub .lbl{font-size:13px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+  .sub .seg{margin-top:0}
+  .stripe-color{display:none;margin-top:8px}
+  .stripe-color.show{display:block}
+</style>
+</head>
+<body>
+<header>
+  <h1>XSR700 烤漆模擬器</h1>
+  <p>用官網白色款照片模擬：選顏色或輸入色號，油箱與前、後土除可以分開設定。螢幕顏色與實際烤漆會有落差，請以烤漆廠實體色板為準。</p>
+</header>
+
+<main>
+  <section class="stage">
+    <div class="photo" id="photo">
+      <canvas id="cv" aria-label="XSR700 改色預覽"></canvas>
+      <span class="tag">原廠顏色</span>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="actions">
+      <button class="primary" id="download">下載設計圖 (PNG)</button>
+      <button id="copy">複製色號清單</button>
+      <button id="compare">按住看原廠</button>
+      <button id="reset">重設</button>
+    </div>
+  </section>
+
+  <section class="panel" id="panel"></section>
+</main>
+
+<script>
+const BASE_SRC = '__BASE__';
+const MASK_SRC = '__MASK__';
+
+const PARTS = [
+  { key:'tank',  id:1, name:'油箱' },
+  { key:'front', id:2, name:'前土除' },
+  { key:'rear',  id:3, name:'後土除' },
+];
+const FINISHES = [ {key:'gloss',name:'亮面'}, {key:'matte',name:'消光'}, {key:'metal',name:'金屬漆'} ];
+const STRIPES = [ {key:'keep',name:'原廠紅線'}, {key:'remove',name:'移除'}, {key:'color',name:'自訂色'} ];
+const PRESETS = [
+  ['珍珠白','#F2F0EA'],['亮黑','#121212'],['消光灰','#5B5F63'],['經典藍','#1F4FA3'],
+  ['賽車紅','#C8102E'],['復古橘','#E06A1B'],['芥末黃','#D9A21B'],['軍綠','#4B5A3A'],
+  ['薄荷綠','#8FD3C1'],['酒紅','#6E1F2B'],['香檳金','#C9A96E'],['天空藍','#7FB3D5'],
+];
+const DEFAULT = {
+  tank:{color:'#1F4FA3',finish:'gloss'},
+  front:{color:'#F2F0EA',finish:'gloss'},
+  rear:{color:'#F2F0EA',finish:'gloss'},
+  stripe:'keep', stripeColor:'#D9A21B', logo:'keep',
+  linkFenders:false,
+};
+const STORE_KEY = 'xsr700-photo-paint';
+let state = load();
+
+function load(){
+  try{ const s = JSON.parse(localStorage.getItem(STORE_KEY)); if(s && s.tank) return {...structuredClone(DEFAULT), ...s}; }catch(e){}
+  return structuredClone(DEFAULT);
+}
+function save(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){} }
+
+// 接受 #RGB、#RRGGBB、RRGGBB、rgb(r,g,b)
+function parseColor(v){
+  v = v.trim();
+  let m = v.match(/^#?([0-9a-f]{3})$/i);
+  if(m) return '#' + m[1].split('').map(c=>c+c).join('').toUpperCase();
+  m = v.match(/^#?([0-9a-f]{6})$/i);
+  if(m) return '#' + m[1].toUpperCase();
+  m = v.match(/^rgb\s*\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*\)$/i);
+  if(m && [m[1],m[2],m[3]].every(n=>+n<=255))
+    return '#' + [m[1],m[2],m[3]].map(n=>(+n).toString(16).padStart(2,'0')).join('').toUpperCase();
+  return null;
+}
+const presetName = hex => (PRESETS.find(p=>p[1]===hex)||[''])[0];
+const finName = k => FINISHES.find(f=>f.key===k).name;
+
+/* ---------- 影像改色 ---------- */
+const LIN = new Float32Array(256);
+for(let i=0;i<256;i++){ const c=i/255; LIN[i] = c<=0.04045 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4); }
+const toSRGB = x => { x = x<=0 ? 0 : x>=1 ? 1 : x; return Math.round(255*(x<=0.0031308 ? 12.92*x : 1.055*Math.pow(x,1/2.4)-0.055)); };
+const hexLin = h => [1,3,5].map(i=>LIN[parseInt(h.substr(i,2),16)]);
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let W, H, base, out, px = [];   // px: 遮罩內每個像素 {i, part, kind, shade, dec}
+const REF = {}; let STRIPE_REF = 1;
+
+function loadImg(src){ return new Promise((ok,err)=>{ const im = new Image(); im.onload=()=>ok(im); im.onerror=err; im.src=src; }); }
+function pct(arr, p){ const a = Float32Array.from(arr).sort(); return a[Math.min(a.length-1, Math.floor(a.length*p))]; }
+
+async function init(){
+  const [bi, mi] = await Promise.all([loadImg(BASE_SRC), loadImg(MASK_SRC)]);
+  W = cv.width = bi.naturalWidth; H = cv.height = bi.naturalHeight;
+  ctx.drawImage(bi,0,0); base = ctx.getImageData(0,0,W,H);
+  const t = document.createElement('canvas'); t.width=W; t.height=H;
+  const tc = t.getContext('2d'); tc.drawImage(mi,0,0);
+  const m = tc.getImageData(0,0,W,H).data;
+  const shades = {1:[],2:[],3:[]}, decs = [];
+  for(let i=0;i<W*H;i++){
+    const o = i*4; if(m[o+3] < 128) continue;
+    const part = m[o+1] >> 6, kind = (m[o+1] >> 4) & 3;
+    px.push({i:o, part, kind, shade:m[o], dec:m[o+2], n:hash(i)});
+    if(kind===0) shades[part].push(m[o]);
+    if(kind===1) decs.push(m[o+2]);
+  }
+  for(const p of [1,2,3]) REF[p] = pct(shades[p], .97);
+  STRIPE_REF = pct(decs, .95);
+  out = new ImageData(new Uint8ClampedArray(base.data), W, H);
+  render();
+}
+function hash(i){ i = Math.imul(i ^ 61, 0x45d9f3b) ^ (i>>>16); i = Math.imul(i, 0x45d9f3b); return ((i ^ (i>>>16)) >>> 0) / 4294967295; }
+
+function paintPixel(d, o, C, t, finish, noise){
+  const tl = LIN[Math.max(0, Math.min(255, Math.round(t*255)))];
+  let r,g,b, spec = Math.max(0, (t-0.9)/0.1); spec = spec*spec*spec;
+  if(finish==='matte'){
+    const f = 0.28 + 0.72*tl;
+    r=C[0]*f; g=C[1]*f; b=C[2]*f;
+    const s = spec*0.06; r+= s; g+= s; b+= s;
+  }else if(finish==='metal'){
+    const f = Math.pow(tl, 1.25) * (0.88 + 0.28*noise);
+    const s = spec*0.28 + (noise>0.985 ? 0.25*tl : 0);
+    r=C[0]*f + s*(1-C[0]*.5); g=C[1]*f + s*(1-C[1]*.5); b=C[2]*f + s*(1-C[2]*.5);
+  }else{
+    const f = tl;
+    const s = spec*0.38;
+    r=C[0]*f + s*(1-C[0]); g=C[1]*f + s*(1-C[1]); b=C[2]*f + s*(1-C[2]);
+  }
+  d[o]=toSRGB(r); d[o+1]=toSRGB(g); d[o+2]=toSRGB(b);
+}
+
+function render(){
+  if(!base) return;
+  const d = out.data, src = base.data;
+  const cols = {1:hexLin(state.tank.color), 2:hexLin(state.front.color), 3:hexLin(state.rear.color)};
+  const fins = {1:state.tank.finish, 2:state.front.finish, 3:state.rear.finish};
+  const stripeC = hexLin(state.stripeColor);
+  for(const p of px){
+    const o = p.i;
+    let keep = p.kind===3 || (p.kind===1 && state.stripe==='keep') || (p.kind===2 && state.logo==='keep');
+    if(keep){ d[o]=src[o]; d[o+1]=src[o+1]; d[o+2]=src[o+2]; continue; }
+    if(p.kind===1 && state.stripe==='color'){
+      paintPixel(d, o, stripeC, Math.min(1.05, p.dec/STRIPE_REF), fins[1], p.n);
+    }else{
+      paintPixel(d, o, cols[p.part], Math.min(1.05, p.shade/REF[p.part]), fins[p.part], p.n);
+    }
+  }
+  ctx.putImageData(showOrig ? base : out, 0, 0);
+}
+
+/* ---------- 介面 ---------- */
+function seg(items, attr){ return `<div class="seg">${items.map(f=>`<button data-${attr}="${f.key}">${f.name}</button>`).join('')}</div>`; }
+function swatches(){ return `<div class="swatches">${PRESETS.map(([n,c])=>`<button class="sw" title="${n} ${c}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>`; }
+function colorRow(label){ return `<div class="row"><input type="color" aria-label="${label}顏色"><input type="text" spellcheck="false" placeholder="#RRGGBB 或 rgb(…)" aria-label="${label}色號"></div>`; }
+
+function wireColor(root, get, set){
+  const picker = root.querySelector('input[type=color]'), text = root.querySelector('input[type=text]');
+  picker.addEventListener('input', ()=> set(picker.value.toUpperCase()));
+  text.addEventListener('input', ()=>{
+    const c = parseColor(text.value);
+    text.classList.toggle('bad', !c && text.value.trim()!=='');
+    if(c){ text.dataset.typing = '1'; set(c); delete text.dataset.typing; }
+  });
+  text.addEventListener('blur', ()=> refreshUI());
+  root.querySelectorAll('.sw').forEach(b=> b.addEventListener('click', ()=> set(b.dataset.c)));
+  return ()=>{
+    const c = get();
+    picker.value = c.toLowerCase();
+    if(!text.dataset.typing && document.activeElement!==text){ text.value = c; text.classList.remove('bad'); }
+    root.querySelectorAll('.sw').forEach(b=> b.classList.toggle('on', b.dataset.c===c));
+  };
+}
+
+const refreshers = [];
+function buildPanel(){
+  const panel = document.getElementById('panel');
+  for(const p of PARTS){
+    const card = document.createElement('div');
+    card.className = 'card'; card.dataset.part = p.key;
+    card.innerHTML = `
+      <h2>${p.name}${p.key==='front' ? '<label class="link"><input type="checkbox" id="link"> 後土除同色</label>' : ''}</h2>
+      <div class="body">
+        <div class="main-color">${colorRow(p.name)}<div class="hint"></div>${swatches()}</div>
+        ${seg(FINISHES,'fin')}
+        ${p.key==='tank' ? `
+        <div class="sub">
+          <div class="lbl">油箱拉線</div>
+          ${seg(STRIPES,'stripe')}
+          <div class="stripe-color">${colorRow('拉線')}</div>
+          <div class="lbl" style="margin-top:12px">YAMAHA 字樣</div>
+          ${seg([{key:'keep',name:'保留'},{key:'remove',name:'移除'}],'logo')}
+        </div>` : ''}
+      </div>`;
+    panel.appendChild(card);
+
+    const mc = card.querySelector('.main-color');
+    const r = wireColor(mc, ()=>state[p.key].color, c=>{
+      state[p.key].color = c;
+      if(state.linkFenders && p.key==='front') state.rear.color = c;
+      commit();
+    });
+    refreshers.push(()=>{ r(); const n = presetName(state[p.key].color); mc.querySelector('.hint').textContent = n ? `預設色：${n}` : '自訂色'; });
+
+    card.querySelectorAll('[data-fin]').forEach(b=> b.addEventListener('click', ()=>{
+      state[p.key].finish = b.dataset.fin;
+      if(state.linkFenders && p.key==='front') state.rear.finish = b.dataset.fin;
+      commit();
+    }));
+    refreshers.push(()=> card.querySelectorAll('[data-fin]').forEach(b=> b.classList.toggle('on', b.dataset.fin===state[p.key].finish)));
+
+    if(p.key==='tank'){
+      const sc = card.querySelector('.stripe-color');
+      sc.innerHTML += swatches();
+      const rs = wireColor(sc, ()=>state.stripeColor, c=>{ state.stripeColor = c; commit(); });
+      card.querySelectorAll('[data-stripe]').forEach(b=> b.addEventListener('click', ()=>{ state.stripe = b.dataset.stripe; commit(); }));
+      card.querySelectorAll('[data-logo]').forEach(b=> b.addEventListener('click', ()=>{ state.logo = b.dataset.logo; commit(); }));
+      refreshers.push(()=>{
+        rs();
+        sc.classList.toggle('show', state.stripe==='color');
+        card.querySelectorAll('[data-stripe]').forEach(b=> b.classList.toggle('on', b.dataset.stripe===state.stripe));
+        card.querySelectorAll('[data-logo]').forEach(b=> b.classList.toggle('on', b.dataset.logo===state.logo));
+      });
+    }
+  }
+  document.getElementById('link').addEventListener('change', e=>{
+    state.linkFenders = e.target.checked;
+    if(state.linkFenders) state.rear = {...state.front};
+    commit();
+  });
+}
+
+function refreshUI(){
+  refreshers.forEach(f=>f());
+  document.getElementById('link').checked = state.linkFenders;
+  document.querySelector('.card[data-part="rear"]').classList.toggle('disabled', state.linkFenders);
+  document.getElementById('summary').innerHTML = summaryItems().map(([n,c,f])=>
+    `<span class="chip"><i style="background:${c}"></i>${n} ${c}${f?'・'+f:''}</span>`).join('');
+}
+function summaryItems(){
+  const items = PARTS.map(p=>[p.name, state[p.key].color, finName(state[p.key].finish)]);
+  if(state.stripe==='color') items.push(['拉線', state.stripeColor, '']);
+  return items;
+}
+function summaryText(){
+  const lines = PARTS.map(p=>{ const s = state[p.key], n = presetName(s.color); return `${p.name}：${s.color}${n?`（${n}）`:''}・${finName(s.finish)}`; });
+  lines.push('油箱拉線：' + (state.stripe==='keep' ? '保留原廠紅線' : state.stripe==='remove' ? '移除' : state.stripeColor));
+  lines.push('YAMAHA 字樣：' + (state.logo==='keep' ? '保留' : '移除'));
+  return 'XSR700 烤漆配色\n' + lines.join('\n');
+}
+function commit(){ save(); refreshUI(); render(); }
+
+let showOrig = false;
+const cmp = document.getElementById('compare');
+const setOrig = v => { showOrig = v; document.getElementById('photo').classList.toggle('orig', v); render(); };
+cmp.addEventListener('pointerdown', ()=> setOrig(true));
+['pointerup','pointerleave','pointercancel'].forEach(e=> cmp.addEventListener(e, ()=> showOrig && setOrig(false)));
+
+document.getElementById('copy').addEventListener('click', async e=>{
+  try{ await navigator.clipboard.writeText(summaryText()); e.target.textContent='已複製 ✓'; }
+  catch(err){ prompt('請手動複製：', summaryText()); }
+  setTimeout(()=> e.target.textContent='複製色號清單', 1500);
+});
+document.getElementById('reset').addEventListener('click', ()=>{ state = structuredClone(DEFAULT); commit(); });
+
+document.getElementById('download').addEventListener('click', ()=>{
+  const pad = 90, c = document.createElement('canvas');
+  c.width = W; c.height = H + pad;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ECEAE5'; x.fillRect(0,0,c.width,c.height);
+  x.putImageData(out, 0, 0);
+  x.font = '24px "PingFang TC","Noto Sans TC",sans-serif'; x.textBaseline = 'middle';
+  let cx = 30; const cy = H + pad/2;
+  for(const [n,col,f] of summaryItems()){
+    x.fillStyle = col; x.beginPath(); x.arc(cx+14, cy, 14, 0, Math.PI*2); x.fill();
+    x.strokeStyle = '#888'; x.lineWidth = 1.5; x.stroke();
+    x.fillStyle = '#222'; const label = `${n} ${col}${f?' '+f:''}`;
+    x.fillText(label, cx+36, cy); cx += 36 + x.measureText(label).width + 40;
+  }
+  c.toBlob(b=>{
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = 'xsr700-paint.png'; a.click();
+    setTimeout(()=> URL.revokeObjectURL(a.href), 1000);
+  });
+});
+
+buildPanel();
+refreshUI();
+init();
+</script>
+</body>
+</html>
